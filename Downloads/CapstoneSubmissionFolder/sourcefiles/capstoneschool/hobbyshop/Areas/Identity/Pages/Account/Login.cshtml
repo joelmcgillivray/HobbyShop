@@ -1,0 +1,49 @@
+﻿@page
+@model hobbyshop.Areas.Identity.Pages.Account.LoginModel
+@{
+    ViewData["Title"] = "Log in";
+}
+
+<!--/**
+* Author: Joel McGillivray
+*
+* Brief summary of page:
+* This page is the logging in by a user, scaffolded mainly from identity with minor alterations for responsiveness
+*/-->
+
+<h1 class="text-center mt-4">@ViewData["Title"]</h1>
+<div class="container my-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-6 col-md-8 col-sm-10">
+            <section>
+                <form itemid="account" method="post">
+                    <h2 class="text-center">Use a local account to log in.</h2>
+                    <hr />
+
+                    <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+
+                    <div class="form-floating mb-3">
+                        <input asp-for="Input.Email" class="form-control" autocomplete="username" aria-required="true" />
+                        <label asp-for="Input.Email" class="form-label"></label>
+                        <span asp-validation-for="Input.Email" class="text-danger"></span>
+                    </div>
+                    <div class="form-floating mb-3">
+                        <input asp-for="Input.Password" class="form-control" autocomplete="current-password" aria-required="true" />
+                        <label asp-for="Input.Password" class="form-label"></label>
+                        <span asp-validation-for="Input.Password" class="text-danger"></span>
+                    </div>
+                    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+                    {
+                        <div class="alert alert-danger">
+                            @Model.ErrorMessage
+                        </div>
+                    }
+                    <div class="mb-3">
+                        <button id="login-submit" type="submit" class="w-100 btn btn-lg btn-primary">Log in</button>
+                        <a class="w-100 btn btn-lg btn-danger mt-2" href="/" role="button">Cancel</a>
+                    </div>
+                </form>
+            </section>
+        </div>
+    </div>
+</div>

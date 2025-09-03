@@ -1,0 +1,333 @@
+﻿@page "/OrderManagement"
+@using hobbyshop.Data;
+@using Microsoft.EntityFrameworkCore;
+@inject NavigationManager NavigationManager;
+@inject DataContext _context;
+
+<!--/**
+* Author: Joel McGillivray
+*
+* Brief summary of page:
+* This page is the management of orders for the admin. A table is displayed with the orders past and present and the
+* admin can see what is in the orders, as well as change the status of the orders 
+*/-->
+
+<style>
+    .table-responsive {
+        overflow-x: auto;
+    }
+
+        .table-responsive select.form-select {
+            min-width: auto;
+            width: auto;
+        }
+
+        .table-responsive::-webkit-scrollbar {
+            display: none;
+        }
+
+    .status-indicator {
+        height: 15px;
+        width: 15px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    .cancelled {
+        background-color: red;
+    }
+
+    .not-started {
+        background-color: orange;
+    }
+
+    .in-progress {
+        background-color: yellow;
+    }
+
+    .shipped {
+        background-color: green;
+    }
+
+    .pre-order {
+        background-color: lightgreen;
+    }
+
+    .product-image {
+        width: 75px;
+        height: 75px;
+        object-fit: contain;
+    }
+</style>
+
+<a class="btn btn-primary" href="/" role="button">
+    <i class="bi bi-arrow-left-circle"></i> Home
+</a>
+
+<h3 class="text-center">Order Management</h3>
+
+<div class="container mt-5">
+    <div class="table-responsive">
+        <table class="table table-hover table-borderless table-striped align-middle">
+            <thead>
+                <tr>
+                    <th>Order ID</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                    <th>Update Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var order in orders)
+                {
+                    <tr class="@GetRowClass(order.OrderID)" @onclick="() => ToggleOrderDetails(order.OrderID)">
+                        <td>@order.OrderID</td>
+                        <td>
+                            <span class="status-indicator @GetStatusClass(order.Status.StatusName)"></span>
+                            @order.Status.StatusName
+                        </td>
+                        <td>@order.Date.ToString("yyyy-MM-dd")</td>
+                        <td>
+                            <select class="form-select" @onchange="(e) => UpdateOrderStatus(order, e.Value.ToString())">
+                                @foreach (var status in statuses)
+                                {
+                                    <option value="@status.StatusID" selected="@status.StatusID.Equals(order.Status.StatusID)">@status.StatusName</option>
+                                }
+                            </select>
+                        </td>
+                    </tr>
+
+                    @if (currentlyExpandedOrderId == order.OrderID)
+                    {
+                        <tr>
+                            <td colspan="100%">
+                                <table class="table table-sm table-borderless align-middle">
+                                    <thead>
+                                        <tr>
+                                            <th></th>
+                                            <th>Product</th>
+                                            <th>Quantity</th>
+                                            <th>Price</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var detail in order.OrderDetails) {
+                                            <tr>
+                                                <img src="@detail.Item.Image" class="product-image img-fluid rounded">
+                                                <td>@detail.Item.ItemName</td>
+                                                <td>@detail.Quantity</td>
+                                                <td>@detail.Price.ToString("C")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="container mt-2">
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center">
+                <li class="page-item">
+                    @if (IsFirstPage)
+                    {
+                        <button class="page-link" disabled>
+                            <i class="bi bi-caret-left"></i>
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="page-link" @onclick="PreviousPage">
+                            <i class="bi bi-caret-left"></i>
+                        </button>
+                    }
+                </li>
+                <li class="page-item disabled">
+                    <span class="page-link">Page @currentPage of @TotalPages</span>
+                </li>
+                <li class="page-item">
+                    @if (IsLastPage)
+                    {
+                        <button class="page-link" disabled>
+                            <i class="bi bi-caret-right"></i>
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="page-link" @onclick="NextPage">
+                            <i class="bi bi-caret-right"></i>
+                        </button>
+                    }
+                </li>
+            </ul>
+        </nav>
+    </div>
+</div>
+
+@code {
+
+    /// <summary>
+    /// List of Orders
+    /// </summary>
+    private List<Order> orders = new(); 
+    /// <summary>
+    /// List of Statuses
+    /// </summary>
+    private List<Status> statuses = new();
+    /// <summary>
+    /// The current expanded order id table row
+    /// </summary>
+    private int? currentlyExpandedOrderId;
+    /// <summary>
+    /// Current page that a user is on
+    /// </summary>
+    public int currentPage = 1;
+    /// <summary>
+    /// Total number of items per page
+    /// </summary>
+    public int pageSize = 10;
+    /// <summary>
+    /// Total count of the items
+    /// </summary>
+    public int totalCount = 0;
+    /// <summary>
+    /// Boolean value to determine if the page is the first page
+    /// </summary>
+    public bool IsFirstPage => currentPage == 1;
+    /// <summary>
+    /// Boolean value to determine if the page is the last page
+    /// </summary>
+    public bool IsLastPage => currentPage >= TotalPages;
+    /// <summary>
+    /// Getting the total amount of pages that should be displayed for the UI
+    /// </summary>
+    public int TotalPages => (int)Math.Ceiling((double)totalCount / pageSize);
+
+    /// <summary>
+    /// Grabs the orders with the items and correct status of orders and displays them 
+    /// </summary>
+    /// <returns>No returns</returns>
+    protected override async Task OnInitializedAsync()
+    {
+        totalCount = await _context.Orders.CountAsync();
+        orders = await _context.Orders
+                                .Skip((currentPage - 1) * pageSize)
+                                .Take(pageSize)
+                                .Include(o => o.Status)
+                                .Include(o => o.OrderDetails)
+                                    .ThenInclude(od => od.Item)
+                                .ToListAsync();
+
+        statuses = await _context.Statuses.ToListAsync();
+    }
+
+    /// <summary>
+    /// Method for reloading the page after a click the next or previous buttons
+    /// </summary>
+    /// <returns>No return</returns>
+    public async Task LoadItems()
+    {
+        orders = await _context.Orders
+                            .Skip((currentPage - 1) * pageSize)
+                            .Take(pageSize)
+                            .Include(o => o.Status)
+                            .Include(o => o.OrderDetails)
+                                .ThenInclude(od => od.Item)
+                            .ToListAsync();
+    }
+
+    /// <summary>
+    /// Method for previous page, and notifies that state has changed
+    /// </summary>
+    /// <returns>No return</returns>
+    public async Task PreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+            await LoadItems();
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Method for next page, and notifies that state has changed
+    /// </summary>
+    /// <returns>No return</returns>
+    public async Task NextPage()
+    {
+        if (currentPage < TotalPages)
+        {
+            currentPage++;
+            await LoadItems();
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Updates the status of the order
+    /// </summary>
+    /// <param name="order">the order id that is passed in</param>
+    /// <param name="newStatusId">the new status of order</param>
+    /// <returns>No return</returns>
+    private async Task UpdateOrderStatus(Order order, string newStatusId)
+    {
+        var statusId = int.Parse(newStatusId);
+        order.StatusID = statusId;
+        _context.Orders.Update(order);
+        await _context.SaveChangesAsync();
+
+        await LoadItems();
+    }
+
+    /// <summary>
+    /// Expands and retracts expansions of table details
+    /// </summary>
+    /// <param name="orderId">The specific row where that order id is found</param>
+    private void ToggleOrderDetails(int orderId)
+    {
+        if (currentlyExpandedOrderId == orderId)
+        {
+            // If the user clicks the currently expanded row, collapse it
+            currentlyExpandedOrderId = null;
+        }
+        else
+        {
+            // Otherwise, expand the new row
+            currentlyExpandedOrderId = orderId;
+        }
+    }
+
+    /// <summary>
+    /// This will give indication of whether the row needs expanding or is already expanded and active
+    /// </summary>
+    /// <param name="orderId">Specific orderid where the row is expanded</param>
+    /// <returns>The current row where the order id is expanded</returns>
+    private string GetRowClass(int orderId)
+    {
+        return currentlyExpandedOrderId == orderId ? "table-active" : "";
+    }
+
+    /// <summary>
+    /// This will activate the correct status name to the color so the circle of color will appear
+    /// beside the order status
+    /// </summary>
+    /// <param name="statusName">The name of the status of the order</param>
+    /// <returns>The correct status name to apply color option to the order/status</returns>
+    private string GetStatusClass(string statusName)
+    {
+        return statusName.ToLower() switch
+        {
+            "cancelled" => "cancelled",
+            "not started" => "not-started",
+            "in progress" => "in-progress",
+            "shipped" => "shipped",
+            "pre-order" => "pre-order",
+            _ => "unknown-status"
+        };
+    }
+}

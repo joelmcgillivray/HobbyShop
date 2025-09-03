@@ -1,0 +1,497 @@
+﻿@page "/Analytics"
+
+<!--/**
+* Author: Joel McGillivray
+*
+* Brief summary of page:
+* This page is the analytics display. An admin can see all the sales of the day, month, and quarter. They can
+* also see the most prolific buyers and their amount paid, as well as the items and their quantities to see what's popular.
+*/-->
+
+@using Microsoft.EntityFrameworkCore;
+@using Radzen.Blazor
+@using Radzen;
+@using hobbyshop.Data;
+@using System.Globalization
+@inject AuthenticationStateProvider AuthenticationStateProvider;
+@inject DataContext _dataContext;
+@inject ApplicationDbContext _identityContext;
+
+<style>
+
+    .table-shadow {
+        box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
+        transition: 0.3s;
+        border-radius: 5px;
+        margin-bottom: 20px;
+        margin-top: 40px;
+    }
+
+        .table-shadow:hover {
+            box-shadow: 0 8px 16px 0 rgba(0,0,0,0.2);
+        }
+</style>
+
+
+<a class="btn btn-primary" href="/" role="button">
+    <i class="bi bi-arrow-left-circle"></i> Home
+</a>
+
+<div class="d-flex flex-row flex-wrap justify-content-center">
+
+@if (showDailyChart)
+{
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowMonthly" role="button">Monthly</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowQuarterly" role="button">Quarterly</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowPerUser" role="button">$ Per User</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowByItem" role="button">Popular Items</a>
+}
+@if (showMonthlyChart)
+{
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowDaily" role="button">Daily</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowQuarterly" role="button">Quarterly</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowPerUser" role="button">$ Per User</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowByItem" role="button">Popular Items</a>
+}
+@if (showQuarterlyChart)
+{
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowDaily" role="button">Daily</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowMonthly" role="button">Monthly</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowPerUser" role="button">$ Per User</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowByItem" role="button">Popular Items</a>
+}
+@if (showPerUser)
+{
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowDaily" role="button">Daily</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowMonthly" role="button">Monthly</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowQuarterly" role="button">Quarterly</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowByItem" role="button">Popular Items</a>
+}
+@if (showByItem)
+{
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowDaily" role="button">Daily</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowMonthly" role="button">Monthly</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowQuarterly" role="button">Quarterly</a>
+    <a class="btn btn-primary ms-1 mt-2" @onclick="ShowPerUser" role="button">$ Per User</a>
+}
+</div>
+
+
+<div class="container">
+    <div class="row">
+        @if (showDailyChart)
+        {
+                <div class="row">
+                    <div class="col-sm-12 my-5">
+                        <h4>Daily Sales for Current Month</h4>
+                        <RadzenChart>
+                            <RadzenColumnSeries Data="@dailySales" CategoryProperty="Date" Title="Daily Sales" ValueProperty="Revenue">
+                                <RadzenSeriesDataLabels Visible="@showDataLabels" />
+                            </RadzenColumnSeries>
+                            <RadzenValueAxis Formatter="@FormatAsCAD">
+                                <RadzenGridLines Visible="true" />
+                                <RadzenAxisTitle Text="Revenue in CAD" />
+                            </RadzenValueAxis>
+                            <RadzenCategoryAxis Visible="false">
+                                <RadzenAxisTicks Visible="true" />
+                                <RadzenCategoryAxisTitle Text="Date" />
+                            </RadzenCategoryAxis>
+                        </RadzenChart>
+                    </div>
+                </div>
+        
+        }
+        @if (showMonthlyChart){
+            
+                <div class="col-sm-12 my-5">
+                <h4>Sales for Every Month</h4>
+                    <RadzenCard class="w-100 mb-4" Style="display: flex; align-items: center; gap: 0.5rem">
+                        <RadzenCheckBox @bind-Value="@smooth" Name="smooth"></RadzenCheckBox>
+                        <RadzenLabel Text="Smooth" For="smooth" Style="margin-right: 1rem;" />
+                        <RadzenCheckBox @bind-Value="@showDataLabels" Name="dataLabels"></RadzenCheckBox>
+                        <RadzenLabel Text="Show Data Labels" For="dataLabels" />
+                    </RadzenCard>
+                    <RadzenChart>
+                        <RadzenLineSeries Smooth="@smooth" Data="@monthlyRevenue" CategoryProperty="Date" Title="2023" ValueProperty="Revenue">
+                            <RadzenMarkers MarkerType="MarkerType.Circle" />
+                            <RadzenSeriesDataLabels Visible="@showDataLabels" />
+                        </RadzenLineSeries>
+                        <RadzenCategoryAxis Visible="false" Padding="20" Formatter="@FormatAsMonth" />
+                        <RadzenValueAxis Formatter="@FormatAsCAD">
+                            <RadzenGridLines Visible="true" />
+                            <RadzenAxisTitle Text="Revenue in CAD" />
+                        </RadzenValueAxis>
+                    </RadzenChart>
+                </div>
+        }
+        @if (showQuarterlyChart)
+        {
+            <div class="col-sm-12 col-lg-6 offset-lg-3 my-5">
+                <h4>Quarterly Sales</h4>
+                <RadzenCard class="w-100 mb-4">
+                    <RadzenCheckBox @bind-Value="@showDataLabels" Name="dataLabels"></RadzenCheckBox>
+                    <RadzenLabel Text="Show Data Labels" For="dataLabels" Style="margin-left: 8px; vertical-align: middle;" />
+                </RadzenCard>
+                <RadzenChart>
+                    <RadzenPieSeries Data="@quarterlyRevenue" Title="Revenue" CategoryProperty="Quarter" ValueProperty="Revenue">
+                        <RadzenSeriesDataLabels Visible="@showDataLabels" />
+                    </RadzenPieSeries>
+                </RadzenChart>
+            </div>
+        }
+        @if (showPerUser)
+        {
+            
+            <div class="table-shadow">
+                <div class="table-responsive mt-2">
+                    <h4 class="text-center">Sales spent per user</h4>
+                    <table class="table table-striped table-hover table-bordered">
+                        <thead class="table-dark">
+                            <tr>
+                                <th scope="col">User</th>
+                                <th scope="col" class="text-end">Total Purchases</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var userPurchase in userPurchases)
+                            {
+                                <tr>
+                                    <td>@userPurchase.Key</td>
+                                    <td class="text-end">@userPurchase.Value.ToString("C")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+        @if (showByItem)
+        {
+            <div class="table-shadow">
+                <div class="container mt-3">
+                    <h4 class="text-center">Item Sales Summary</h4>
+                    <div class="table-responsive">
+                        <!-- Add this div here -->
+                        <table class="table table-striped">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Item ID</th>
+                                    <th>Item Name</th>
+                                    <th>Total Sold</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var item in soldItems)
+                                {
+                                    <tr>
+                                        <td>@item.Key</td>
+                                        <td>@item.Value.ItemName</td>
+                                        <td>@item.Value.TotalQuantity</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+
+@code {
+    /// <summary>
+    /// Showing the labels for the charts
+    /// </summary>
+    public bool showDataLabels = false;
+    /// <summary>
+    /// Gives data points a smoother look rather than straight arrows
+    /// </summary>
+    public bool smooth = false;
+    /// <summary>
+    /// Showing which buttons to be displayed for the admin, this shows daily chart 
+    /// </summary>
+    public bool showDailyChart = true;
+    /// <summary>
+    /// Showing which buttons to be displayed for the admin, this shows monthly chart
+    /// </summary>
+    public bool showMonthlyChart = false;
+    /// <summary>
+    /// Showing which buttons to be displayed for the admin, this shows monthly chart
+    /// </summary>
+    public bool showQuarterlyChart = false;
+    /// <summary>
+    /// Showing which buttons to be displayed for the admin, this shows popular items
+    /// </summary>
+    public bool showByItem = false;
+    /// <summary>
+    /// Showing which buttons to be displayed for the admin, this shows per user
+    /// </summary>
+    public bool showPerUser = false;
+    /// <summary>
+    /// The daily sales for the current month
+    /// </summary>
+    List<DataItem> dailySales = new List<DataItem>();
+    /// <summary>
+    /// The monthly revenue
+    /// </summary>
+    List<DataItem> monthlyRevenue;
+    /// <summary>
+    /// The quarterly revenue of the year
+    /// </summary>
+    DataItem[] quarterlyRevenue;
+    /// <summary>
+    /// The disctionary to hold in the amount spent per user
+    /// </summary>
+    private Dictionary<string, decimal> userPurchases = new Dictionary<string, decimal>();
+    /// <summary>
+    /// The dictionary to hold the item name and the total quantity of the sold items
+    /// </summary>
+    private Dictionary<int, (string ItemName, int TotalQuantity)> soldItems;
+
+    /// <summary>
+    /// This will get all the relevant data to be loaded for the graphs, and charts to be displayed
+    /// to the admin. 
+    /// </summary>
+    /// <returns>No return</returns>
+    protected override async Task OnInitializedAsync()
+    {
+        var orderData = _dataContext.Orders.Include(o => o.OrderDetails).ToList();
+        var currentMonth = DateTime.Today.Month;
+        var currentYear = DateTime.Today.Year;
+        userPurchases = await GetUserPurchaseTotalsAsync();
+
+        // Getting quarterly rev to display on load
+        quarterlyRevenue = orderData.GroupBy(order => GetQuarter(order.Date))
+                                        .Select(group => new DataItem
+                                            {
+                                                Quarter = group.Key,
+                                                Revenue = (double)group.Sum(order => order.OrderDetails.Sum(detail => (decimal)detail.Price))
+                                            })
+                                        .ToArray();
+
+        // Getting montly rev to display on load
+        monthlyRevenue = orderData.GroupBy(order => new { order.Date.Year, order.Date.Month })
+                                      .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
+                                      .Select(group => new DataItem
+                                          {
+                                              Date = new DateTime(2023, group.Key.Month, 1).ToString("yyyy-MM-dd"),
+                                              Revenue = (double)group.Sum(order => order.OrderDetails.Sum(detail => (decimal)detail.Price))
+                                          })
+                                      .ToList();
+
+        // Getting all the months to be able to display if there are orders in that month
+        var monthOrders = _dataContext.Orders
+                                  .Include(o => o.OrderDetails)
+                                  .Where(order => order.Date.Month == currentMonth && order.Date.Year == currentYear)
+                                  .ToList();
+
+        //Getting daily rev to display on load
+        dailySales = monthOrders.GroupBy(order => order.Date.Date)
+                                   .Select(group => new DataItem
+                                       {
+                                           Date = group.Key.ToString("yyyy-MM-dd"),
+                                           Revenue = (double)group.Sum(order => order.OrderDetails.Sum(detail => (decimal)detail.Price))
+                                       })
+                                   .ToList();
+
+        var orderDetails = await _dataContext.OrderDetails
+                                            .Include(od => od.Item)
+                                            .ToListAsync();
+
+        soldItems = orderDetails
+                        .GroupBy(od => od.ItemID)
+                        .ToDictionary(
+                            g => g.Key,
+                            g => (ItemName: g.First().Item.ItemName, TotalQuantity: g.Sum(od => od.Quantity))
+                        );
+
+        // Sort by quantity in descending order
+        soldItems = soldItems
+                        .OrderByDescending(kv => kv.Value.TotalQuantity)
+                        .ToDictionary(kv => kv.Key, kv => kv.Value);
+    }
+
+    /// <summary>
+    /// Turns on the display for daily charting
+    /// </summary>
+    public void ShowDaily()
+    {
+        showDailyChart = true;
+        showMonthlyChart = false;
+        showQuarterlyChart = false;
+        showPerUser = false;
+        showByItem = false;
+    }
+
+    /// <summary>
+    /// Turns on the display for monthly charting
+    /// </summary>
+    public void ShowMonthly()
+    {
+        showDailyChart = false;
+        showMonthlyChart = true;
+        showQuarterlyChart = false;
+        showPerUser = false;
+        showByItem = false;
+    }
+
+    /// <summary>
+    /// Turns on the display for quarterly charting
+    /// </summary>
+    public void ShowQuarterly()
+    {
+        showDailyChart = false;
+        showMonthlyChart = false;
+        showPerUser = false;
+        showQuarterlyChart = true;
+        showByItem = false;
+    }
+
+    /// <summary>
+    /// Turns on the display for per user spent
+    /// </summary>
+    public void ShowPerUser()
+    {
+        showPerUser = true;
+        showDailyChart = false;
+        showMonthlyChart = false;
+        showQuarterlyChart = false;
+        showByItem = false;
+    }
+
+    /// <summary>
+    /// Turns on the display for the most popular items
+    /// </summary>
+    public void ShowByItem()
+    {
+        showPerUser = false;
+        showDailyChart = false;
+        showMonthlyChart = false;
+        showQuarterlyChart = false;
+        showByItem = true;
+    }
+
+    /// <summary>
+    /// Gets the quarters to be able to put the correct data into it 
+    /// </summary>
+    /// <param name="date">The current date being passed in by the OnInit for the orders to be put into their
+    ///  correct quarters</param>
+    /// <returns>Returns the quarterly data</returns>
+    private string GetQuarter(DateTime date)
+    {
+        if (date.Month >= 1 && date.Month <= 3)
+            return "Q1";
+        if (date.Month >= 4 && date.Month <= 6)
+            return "Q2";
+        if (date.Month >= 7 && date.Month <= 9)
+            return "Q3";
+        return "Q4";
+    }
+
+    /// <summary>
+    /// Formats the given value as Canadian Dollar format.
+    /// </summary>
+    /// <param name="value">The value to be formatted.</param>
+    /// <returns>Returns a string representation of the value in CAD format.</returns>
+    public string FormatAsCAD(object value)
+    {
+        return Math.Round((double)value, 2).ToString("C", CultureInfo.CreateSpecificCulture("en-CA"));
+    }
+
+    /// <summary>
+    /// Formats the given value to represent the month abbreviation (e.g., Jan, Feb, etc.).
+    /// </summary>
+    /// <param name="value">The date value to be formatted.</param>
+    /// <returns>Returns a string representation of the month abbreviation or an empty string if the value is null.</returns>
+    public string FormatAsMonth(object value)
+    {
+        if (value != null)
+        {
+            return Convert.ToDateTime(value).ToString("MMM");
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Getting the user id to figure out what orders belong to that user
+    /// </summary>
+    /// <returns></returns>
+    private async Task<string> GetUserId()
+    {
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        var UserId = user.FindFirst(u => u.Type.Contains("nameidentifier"))?.Value;
+        return UserId;
+    }
+
+    /// <summary>
+    /// This gets the total dollar amount per user spent to be displayed to admin
+    /// </summary>
+    /// <returns>REturns te total dollar amount, as well as the users</returns>
+    private async Task<Dictionary<string, decimal>> GetUserPurchaseTotalsAsync()
+    {
+        var orders = await _dataContext.Orders
+         .Include(o => o.OrderDetails)
+         .ToListAsync();
+
+        var userEmails = new Dictionary<string, string>(); // To store User IDs and their corresponding emails
+        var userPurchaseTotals = new Dictionary<string, decimal>();
+
+        foreach (var order in orders)
+        {
+            decimal totalPurchase = order.OrderDetails.Sum(d => (decimal)d.Price * d.Quantity);
+
+            if (!userEmails.ContainsKey(order.UserId))
+            {
+                var userEmail = await _identityContext.Users
+                    .Where(u => u.Id == order.UserId) // Assuming 'Id' is the user ID field in the User entity
+                    .Select(u => u.Email)
+                    .FirstOrDefaultAsync();
+
+                if (userEmail != null)
+                {
+                    userEmails.Add(order.UserId, userEmail);
+                }
+            }
+
+            string email = userEmails.ContainsKey(order.UserId) ? userEmails[order.UserId] : "Unknown";
+
+            if (userPurchaseTotals.ContainsKey(email))
+            {
+                userPurchaseTotals[email] += totalPurchase;
+            }
+            else
+            {
+                userPurchaseTotals.Add(email, totalPurchase);
+            }
+        }
+
+        return userPurchaseTotals;
+    }
+
+    /// <summary>
+    /// Class specifically for the graph API and its data
+    /// </summary>
+    class DataItem
+    {
+        ///  <summary>
+        /// To ensure the dates are proper
+        /// </summary>
+        public string Date { get; set; }
+        /// <summary>
+        /// To get the quarterly data
+        /// </summary>
+        public string Quarter { get; set; }
+        /// <summary>
+        /// To get all the revenue data
+        /// </summary>
+        public double Revenue { get; set; }
+    }
+}
+
+
+
+
+
+

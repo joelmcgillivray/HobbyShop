@@ -1,0 +1,272 @@
+﻿@page "/cartpage"
+@using Microsoft.AspNetCore.Components;
+@using Microsoft.AspNetCore.Identity;
+@using Microsoft.EntityFrameworkCore;
+@using hobbyshop.Data;
+@inject NavigationManager Navigation;
+@inject IHttpContextAccessor HttpContextAccessor;
+@inject IJSRuntime JSRuntime;
+@inject AuthenticationStateProvider AuthenticationStateProvider;
+@inject DataContext _dataContext;
+@inject UserManager<IdentityUser> _userManager;
+
+<!--/**
+ * Author: Joel McGillivray
+ *
+ * Brief summary of page:
+ * This page is for the Cart and anything to do after landing on the cart page after clicking the cart button.
+ * A user can see all the items they purchased, can remove items, and it will display their total price before and after
+ * taxes. A user can then click checkout to go to the checkout page.
+ */-->
+
+<style>
+    .max-image-size {
+        max-width: 100px;
+        max-height: 100px;
+    }
+</style>
+
+@if (userCartItems == null)
+{
+    <p>Loading cart items...</p>
+}
+else if (!userCartItems.Any())
+{
+    <div class="d-flex justify-content-center align-items-center vh-100">
+        <div class="card shadow-lg p-4">
+            <p class="text-center fs-3">Your cart is empty!</p>
+
+            <a class="btn btn-primary" href="/" role="button">
+                <i class="bi bi-arrow-left-circle"></i> Home
+            </a>
+        </div>
+    </div>
+}
+else
+{
+    <div class="container my-5">
+    <div class="card shadow-sm">
+        <div class="card-body">
+    <table class="table">
+        <thead>
+            <tr>
+                <th class="d-none d-md-table-cell"></th>
+                <th class="text-center">Item Name</th>
+                <th class="text-center">Quantity</th>
+                <th class="text-center">Price</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var cartItem in userCartItems)
+            {
+                <tr>
+                    <td class="d-none d-md-table-cell"><img src="@cartItem.Item.Image" class="max-image-size"></td>
+                    <td class="text-center align-middle">@cartItem.Item.ItemName</td>
+                    <td class="text-center align-middle">@cartItem.Quantity</td>
+                    <td class="text-center align-middle">@String.Format("{0:C}", cartItem.ItemPrice)</td>
+                    <td class="text-center align-middle">
+                        <button @onclick="(() => RemoveItemFromCart(cartItem.ItemID))" class="btn btn-link">
+                            <i class="bi bi-trash3 text-danger"></i>
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+                @if (userCartItems != null && userCartItems.Any())
+                {
+                    <div class="d-flex flex-column align-items-end mb-3">
+
+                        <div class="mb-2">
+                            <strong>Subtotal: </strong> @String.Format("{0:C}", preTaxTotal)
+                        </div>
+
+                        <div class="mb-3">
+                            <strong>Total: </strong> @String.Format("{0:C}", cartTotal) <strong> after 13% tax*</strong>
+                        </div>
+
+                        <div>
+                            <a class="btn btn-primary" href="/checkout" role="button">Checkout</a>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+
+    /// <summary>
+    /// The items that are going to appear on the page
+    /// </summary>
+    [Parameter]
+    public Item Item { get; set; }
+    /// <summary>
+    /// The constant tax rate of 13%
+    /// </summary>
+    const decimal taxRate = 0.13m;
+    /// <summary>
+    /// The total before the tax
+    /// </summary>
+    private decimal preTaxTotal;
+    /// </summary> 
+    /// Gets the users cart items in a list
+    /// <summary>
+    private List<CartItem> userCartItems;
+    /// <summary>
+    /// Getting the carts total dollar value
+    /// </summary>
+    private decimal cartTotal; 
+
+    /// <summary>
+    /// This will get the cart from the signed in user, then list all the items in that cart, and then call the
+    /// calculate method to get the total cost for display.
+    /// </summary>
+    /// <returns>No return</returns>
+    protected override async Task OnInitializedAsync()
+    {
+        var cart = await GetUserCart();
+        userCartItems = cart?.CartItems?.ToList() ?? new List<CartItem>();
+        preTaxTotal = CalculateCartTotal(userCartItems);
+        cartTotal = (preTaxTotal * taxRate) + preTaxTotal;
+    }
+
+    /// <summary>
+    /// Removes the item from the cart
+    /// </summary>
+    /// <param name="itemId">The item id to remove from the cart</param>
+    /// <returns>No return</returns>
+    private async Task RemoveItemFromCart(int itemId)
+    {
+        await RemoveItem(itemId);
+
+        // Refresh cart items after removal
+        var cart = await GetUserCart();
+        userCartItems = cart?.CartItems?.ToList() ?? new List<CartItem>();
+        cartTotal = CalculateCartTotal(userCartItems);
+
+        // Updates the cart total price
+        UpdateCartTotals();
+
+    }
+
+    /// <summary>
+    /// calculates the value of the users cart in dollars
+    /// </summary>
+    /// <param name="cartItems">The list of details for the cart</param>
+    /// <returns>The total price of cart in dollars</returns>
+    private decimal CalculateCartTotal(List<CartItem> cartItems)
+    {
+        return cartItems.Sum(item => item.ItemPrice * item.Quantity);
+    }
+
+    /// </summary> 
+    /// Updates the total cart value including the taxes
+    /// <summary>
+    private void UpdateCartTotals()
+    {
+        preTaxTotal = CalculateCartTotal(userCartItems);
+        cartTotal = (preTaxTotal * taxRate) + preTaxTotal;
+    }
+
+    /// <summary>
+    /// Remove the item from the specific users cart
+    /// </summary>
+    /// <param name="itemId">Specific item id that needs to be removed</param>
+    /// <returns>Amount of items within the cart</returns>
+    public async Task<int> RemoveItem(int itemId)
+    {
+        string userId = await GetUserId();
+
+        try
+        {
+            // Get the userId if they dont have a cart
+            if (string.IsNullOrEmpty(userId))
+                // Irrelevant since they wont have access to cart anyways
+                throw new Exception("User is not logged in."); 
+            var cart = await GetCart(userId);
+            if (cart is null)
+                throw new Exception("Invalid cart.");
+
+            var cartItem = _dataContext.CartItem.FirstOrDefault(a => a.CartID == cart.CartID && a.ItemID == itemId);
+            if (cartItem is null)
+                throw new Exception("No items in cart.");
+            // if the items in the cart is just 1 of that item then remove the cartItem
+            else if (cartItem.Quantity == 1)
+                _dataContext.CartItem.Remove(cartItem);
+            // otherwise decrease its quantity.
+            else
+                cartItem.Quantity = cartItem.Quantity - 1;
+            _dataContext.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+        var cartItemCount = await GetCartItemCount(userId);
+        return cartItemCount;
+    }
+
+    /// <summary>
+    /// Getting the items out of the cart for the user
+    /// </summary>
+    /// <returns>The cart</returns>
+    /// <exception cref="InvalidOperationException">If the user does not exist or there is an
+    /// error with the server/db</exception>
+    public async Task<Cart> GetUserCart()
+    {
+        var userId = await GetUserId();
+        if (userId == null)
+            throw new InvalidOperationException("Invalid UserId");
+        var cart = await _dataContext.Carts
+            .Include(a => a.CartItems)
+            .ThenInclude(a => a.Item)  
+            .Where(a => a.UserId == userId)
+            .FirstOrDefaultAsync();
+        return cart;
+    }
+
+    /// <summary>
+    /// Getting the cart for the specific user that is logged in
+    /// </summary>
+    /// <param name="userId">The specific users unique id</param>
+    /// <returns>Whether the user has a cart or not</returns>
+    public async Task<Cart> GetCart(string userId)
+    {
+        var cart = await _dataContext.Carts.FirstOrDefaultAsync(x => x.UserId == userId);
+        return cart;
+    }
+
+    /// <summary>
+    /// Getting the total count of the users cart
+    /// </summary>
+    /// <param name="userId">The specific user that is logged in</param>
+    /// <returns>Total quantity of items in the cart</returns>
+    public async Task<int> GetCartItemCount(string userId = "")
+    {
+        if (string.IsNullOrEmpty(userId))
+        {
+            userId = await GetUserId();
+        }
+
+        // Sum the quantities of each CartItem record for the user's cart.
+        var totalQuantity = await _dataContext.CartItem
+            .Where(cartItem => cartItem.Cart.UserId == userId)
+            .SumAsync(cartItem => (int?)cartItem.Quantity) ?? 0;
+
+        return totalQuantity;
+    }
+
+    /// <summary>
+    /// Getting the user id to figure out what orders belong to that user
+    /// </summary>
+    /// <returns></returns>
+    async Task<string> GetUserId()
+    {
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        var UserId = user.FindFirst(u => u.Type.Contains("nameidentifier"))?.Value;
+        return UserId;
+    }
+}

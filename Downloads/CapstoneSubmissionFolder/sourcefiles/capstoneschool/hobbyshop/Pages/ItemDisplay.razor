@@ -1,0 +1,289 @@
+﻿@page "/ItemDisplay/{ItemID:int}"
+@using Microsoft.EntityFrameworkCore;
+@using Microsoft.AspNetCore.Components;
+@using hobbyshop.Data;
+@using Microsoft.AspNetCore.Identity;
+@inject AuthenticationStateProvider AuthenticationStateProvider;
+@inject IDbContextFactory<DataContext> DataContextFactory;
+@inject DataContext _dataContext;
+@inject UserManager<IdentityUser> _userManager;
+
+<!--/**
+* Author: Joel McGillivray
+*
+* Brief summary of page:
+* This page is the item display. When a user clicks on the item is shows a display of that item specifically.
+* On this page if a valid user doesn't have a cart this will also create one for them. If the item is not in stock
+* an out of stock option is replaced instead of the add to cart button. For an admin this page also displays the stock levels
+* should they want to view it from this angle rather than the ItemCreate view.
+*/-->
+
+<a class="btn btn-primary mb-2" href="/" role="button">
+    <i class="bi bi-arrow-left-circle"></i> Home
+</a>
+
+<div>
+    @if (Item != null)
+    {
+        <div class="card shadow">
+            <div class="row g-0">
+                <div class="col-md-4 d-flex align-items-center justify-content-center p-4">
+                    <img src="@Item.Image" class="img-fluid" style="max-width:200px; max-height:200px;" alt="@Item.ItemName">
+                </div>
+                <div class="col-md-8">
+                    <div class="card-body">
+                        <h5 class="card-title">@Item.ItemName</h5>
+                        <p class="card-text"><small class="text-muted">@Item.SetName</small></p>
+                        <p class="card-text">@Item.Description</p>
+                        <p class="card-text"><strong>Price:</strong> @String.Format("{0:C}", Item.Price)</p>
+                        <AuthorizeView>
+                            <Authorized>
+                                @if (Item.Stock > 0)
+                                {
+                                    <button type="button" @onclick="OnAddToCartClick" class="btn btn-primary">Add to Cart</button>
+                                } else
+                                {
+                                    <button type="button" class="btn btn-danger">Out of Stock</button>
+                                }
+                            </Authorized>
+                        </AuthorizeView>
+                    </div>
+                </div>
+            </div>
+            <AuthorizeView Roles="admin">
+                <Authorized>
+                    <div class="card-footer text-muted">
+                        <p class="card-text">Stock: @Item.Stock</p>
+                    </div>
+                </Authorized>
+            </AuthorizeView>
+        </div>
+    }
+    else
+    {
+        <div class="alert alert-warning" role="alert">
+            Item does not exist
+        </div>
+    }
+</div>
+
+@if (showModal)
+{
+    <div class="modal show" tabindex="-1" style="display: block;">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-body">
+                    <p>Item successfully added to cart</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop show"></div>
+}
+
+@code {
+
+    /// <summary>
+    /// The item identifier
+    /// </summary>
+    [Parameter]
+    public int ItemID { get; set; }
+    /// <summary>
+    /// The item itself and its information
+    /// </summary>
+    [Parameter]
+    public Item Item { get; set; }
+    /// <summary>
+    /// Boolean value to show the modal
+    /// </summary>
+    private bool showModal = false;
+
+    /// <summary>
+    /// If the person is logged in and authorized, get the users cart and if the database has properly
+    /// loaded refresh the page to show the items.
+    /// </summary>
+    /// <returns>No return</returns>
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        using var context = await DataContextFactory.CreateDbContextAsync();
+        Item = await context.Items.Where(Item => Item.ItemID == ItemID).FirstOrDefaultAsync();
+
+        if (user.Identity.IsAuthenticated)
+        {
+            var cart = await GetUserCart();
+        }
+    }
+
+    /// <summary>
+    /// Shows a modal when a user adds a cart, this is to dissuade from a user clicking too many times causing a crash
+    /// </summary>
+    private void ShowModalForAddToCart()
+    {
+        showModal = true;
+        StateHasChanged();
+        _ = CloseModalAfterDelay();
+    }
+
+    /// <summary>
+    /// Closes the modal after a 3 second delay, again if the user does not close the modal themselves it will
+    /// go away on its own
+    /// </summary>
+    /// <returns>No return</returns>
+    private async Task CloseModalAfterDelay()
+    {
+        await Task.Delay(3000);
+        showModal = false;
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// When a user selects to close the modal themselves by clicking the (x)
+    /// </summary>
+    private void CloseModal()
+    {
+        showModal = false;
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Adding the specific item to the cart
+    /// </summary>
+    /// <returns></returns>
+    private async Task OnAddToCartClick()
+    {
+        // Adding the item by item id and the quantity which is just 1 
+        await AddItem(Item.ItemID, 1);
+        ShowModalForAddToCart();
+    }
+
+    /// <summary>
+    /// Adding an item to the users cart
+    /// </summary>
+    /// <param name="itemId">The item id of the item user wants to add to cart</param>
+    /// <param name="qty">The total number of that item that is going to the cart</param>
+    /// <returns>Returns the total number of items within that users cart</returns>
+    /// <exception cref="InvalidOperationException">If there is an error with the server or db</exception>
+    public async Task<int> AddItem(int itemId, int qty)
+    {
+        // Get the currently logged in users id 
+        string userId = await GetUserId();
+        try
+        {
+            if (string.IsNullOrEmpty(userId))
+                throw new InvalidOperationException("User is not logged in.");
+
+            // Fetch the item details
+            var item = await _dataContext.Items.FindAsync(itemId);
+            if (item == null)
+                throw new InvalidOperationException("Item not found.");
+
+            // Fetch the cart 
+            var cart = await GetCart(userId);
+            // If there is no cart then create one
+            if (cart is null)
+            {
+                cart = new Cart { UserId = userId };
+                _dataContext.Carts.Add(cart);
+                await _dataContext.SaveChangesAsync();
+            }
+
+            // Add the cart item to the cart 
+            var cartItem = await _dataContext.CartItem.FirstOrDefaultAsync(a => a.CartID == cart.CartID && a.ItemID == itemId);
+            // If this item already exists in the cart then increase the quantity
+            if (cartItem is not null)
+            {
+                cartItem.Quantity += qty;
+            }
+            else
+            {
+                // Otherwise add the new item to the cart
+                decimal convertedPrice = item.Price.HasValue ? Convert.ToDecimal(item.Price.Value) : 0M;
+                cartItem = new CartItem
+                    {
+                        ItemID = itemId,
+                        CartID = cart.CartID,
+                        Quantity = qty,
+                        ItemPrice = convertedPrice
+                    };
+                _dataContext.CartItem.Add(cartItem);
+            }
+
+            // Save the changes to the database
+            await _dataContext.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error: " + ex);
+        }
+
+        // Get the amount of total items in the users cart
+        var cartItemCount = await GetCartItemCount(userId);
+        // Return the total count
+        return cartItemCount;
+    }
+
+    /// <summary>
+    /// Getting the items out of the cart for the user
+    /// </summary>
+    /// <returns>The cart</returns>
+    /// <exception cref="InvalidOperationException">If the user does not exist or there is an
+    /// error with the server/db</exception>
+    public async Task<Cart> GetUserCart()
+    {
+        var userId = await GetUserId();
+        if (userId == null)
+            throw new InvalidOperationException("Invalid UserId");
+        var cart = await _dataContext.Carts
+            .Include(a => a.CartItems)
+            .ThenInclude(a => a.Item) 
+            .Where(a => a.UserId == userId)
+            .FirstOrDefaultAsync();
+        return cart;
+    }
+
+    /// <summary>
+    /// Getting the cart for the specific user that is logged in
+    /// </summary>
+    /// <param name="userId">The specific users unique id</param>
+    /// <returns>Whether the user has a cart or not</returns>
+    public async Task<Cart> GetCart(string userId)
+    {
+        var cart = await _dataContext.Carts.FirstOrDefaultAsync(x => x.UserId == userId);
+        return cart;
+    }
+
+    /// <summary>
+    /// Getting the total count of the users cart
+    /// </summary>
+    /// <param name="userId">The specific user that is logged in</param>
+    /// <returns>Total quantity of items in the cart</returns>
+    public async Task<int> GetCartItemCount(string userId = "")
+    {
+        if (string.IsNullOrEmpty(userId))
+        {
+            userId = await GetUserId();
+        }
+
+        var totalQuantity = await _dataContext.CartItem
+            .Where(cartItem => cartItem.Cart.UserId == userId)
+            .SumAsync(cartItem => (int?)cartItem.Quantity) ?? 0; 
+
+        return totalQuantity;
+    }
+
+    /// <summary>
+    /// Getting the currently logged in users id
+    /// </summary>
+    /// <returns>The unique user id</returns>
+    async Task<string> GetUserId()
+    {
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        var UserId = user.FindFirst(u => u.Type.Contains("nameidentifier"))?.Value;
+        return UserId;
+    }
+}

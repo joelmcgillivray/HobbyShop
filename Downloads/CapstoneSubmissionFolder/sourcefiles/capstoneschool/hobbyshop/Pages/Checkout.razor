@@ -1,0 +1,206 @@
+﻿@page "/checkout"
+@using Microsoft.JSInterop;
+@using hobbyshop.Data;
+@using Stripe;
+@using Microsoft.Extensions.Options;
+@using Microsoft.AspNetCore.Identity;
+@inject IJSRuntime JSRuntime;
+@inject IOptions<StripeOptions> StripeOptions;
+@inject UserManager<IdentityUser> _userManager;
+@inject AuthenticationStateProvider AuthenticationStateProvider;
+@inject DataContext _context;
+
+<!--/**
+ * Author: Joel McGillivray
+ *
+ * Brief summary of page:
+ * This page is what handles the stripe, purchasing an item, and turning successful purchases into orders
+ */-->
+
+<style>
+    .card {
+        border-radius: 10px;
+    }
+
+    #card-element {
+        background-color: #f8f9fa;
+        border-radius: 5px;
+    }
+</style>
+
+<a class="btn btn-primary" href="/" role="button">
+    <i class="bi bi-arrow-left-circle"></i> Home
+</a>
+
+
+@if (!paymentSuccess) {
+    <div class="d-flex vh-100 justify-content-center align-items-center">
+        <div class="col-12 col-md-6">
+            <div class="card shadow">
+                <div class="card-body">
+
+                    <h5 class="card-title text-center mb-4">Complete your payment</h5>
+                    <div id="card-element" class="my-3 p-2 border border-light"></div>
+                    <div id="card-errors" role="alert" class="text-danger mb-2"></div>
+
+                    <button class="btn btn-primary w-100" @onclick="ProcessPayment">Pay</button>
+                </div>
+            </div>
+        </div>
+    </div>
+} 
+else
+{
+    <div class="d-flex vh-100 justify-content-center align-items-center">
+        <div class="text-center p-4 shadow rounded">
+            <p class="font-weight-bold display-4">Success!</p>
+            <p class="font-weight-bold display-6">Your order is being prepared and will be shipped as soon as possible!</p>
+            <p class="font-weight-bold display-6">*If this is a pre-order your item will not be shipped until the release date*</p>
+        </div>
+    </div>
+}
+
+@code {
+
+    /// <summary>
+    /// Whether or not the payment has succeeded. This will be false until valid payment made
+    /// </summary>
+    public bool paymentSuccess = false;
+    /// <summary>
+    /// Constant tax rate for the checkout page
+    /// </summary>
+    const decimal taxRate = 0.13m;
+    /// <summary>
+    /// Total amount after tax but has to be smallest amount (cents) to be processed by stripe
+    /// </summary>
+    private decimal totalAmount = 0m;
+    /// <summary>
+    /// This will load the page the first time its rendered and load the stripe information
+    /// </summary>
+    /// <param name="firstRender">Whether or not this is the first time the page has been loaded</param>
+    /// <returns>No return</returns>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // First time load will grab js stripe items as required by api
+        if (firstRender)
+        {
+            await JSRuntime.InvokeVoidAsync("createStripeElements", StripeOptions.Value.PublishableKey);
+            // Gets the user id and calculates total amount to be entered into api
+            var userId = await GetUserId();
+            var cartItems = _context.CartItem.Where(ci => ci.Cart.UserId == userId).ToList();
+            foreach (var item in cartItems)
+            {
+                totalAmount += item.ItemPrice * item.Quantity * (1 + taxRate);
+            }
+
+            // Convert to cents for Stripe
+            totalAmount = totalAmount * 100;
+        }
+    }
+
+    /// <summary>
+    /// Handles the entirety of the payment process with stripe
+    /// Gets the token 
+    /// Creates a charge with the api
+    /// If it succeeds then we get the currently logged in user and creates a new order
+    /// Creates the order details from the cart details and updates the inventory then clears the users cart.
+    /// </summary>
+    /// <returns>If the token string is null or empty</returns>
+    private async Task ProcessPayment()
+    {
+        try
+        {
+            // Gets the token to ensure validity
+            var token = await JSRuntime.InvokeAsync<string>("getStripeToken");
+            if (string.IsNullOrEmpty(token))
+            {
+                return;
+            }
+            // Creates a charge options to communicate with the api server if token valid
+            var options = new ChargeCreateOptions
+                {
+                    Amount = (long)totalAmount,
+                    Currency = "cad",
+                    Description = "Thank you for your purchase",
+                    Source = token,
+                };
+
+            // Creates new charge service object
+            var service = new ChargeService();
+            // Loads in options from earlier
+            Charge charge = await service.CreateAsync(options);
+
+            if (charge.Status == "succeeded")
+            {
+                paymentSuccess = true;
+                var userId = await GetUserId();
+
+                // Create a new order
+                var order = new Order
+                    {
+                        // Always sets it to the status 5 (Not started)
+                        UserId = userId,
+                        StatusID = 5, 
+                        Date = DateTime.UtcNow
+                    };
+                _context.Orders.Add(order);
+
+                // Save the new order
+                await _context.SaveChangesAsync();
+
+                // Retrieve items from the users cart
+                var cartItems = _context.CartItem.Where(ci => ci.Cart.UserId == userId).ToList();
+
+                // For each item in the cart, create a new OrderDetail
+                foreach (var item in cartItems)
+                {
+                    var orderDetail = new OrderDetails
+                        {
+                            OrderID = order.OrderID,
+                            ItemID = item.ItemID,
+                            Quantity = item.Quantity,
+                            TaxAmount = item.ItemPrice * taxRate * item.Quantity,
+                            Price = (double)item.ItemPrice
+                        };
+                    _context.OrderDetails.Add(orderDetail);
+
+                    // Update inventory
+                    var inventoryItem = _context.Items.FirstOrDefault(i => i.ItemID == item.ItemID);
+                    if (inventoryItem != null)
+                    {
+                        inventoryItem.Stock -= item.Quantity;
+                    }
+                }
+
+                // Save the order details and inventory updates
+                await _context.SaveChangesAsync();
+
+                // Clear the users cart
+                _context.CartItem.RemoveRange(cartItems);
+                await _context.SaveChangesAsync();
+            }
+            else
+            {
+                // Due to the nature of how this api is working it will always work unless coded otherwise, or if something went wrong
+                Console.WriteLine("There was an error with the transaction");
+            }
+        }
+        catch (StripeException ex)
+        {   
+            // If there is an error catch the stripe exception and print to console
+            Console.WriteLine(ex);
+        }
+    }
+
+    /// <summary>
+    /// Getting the currently logged in users id
+    /// </summary>
+    /// <returns>The unique user id</returns>
+    async Task<string> GetUserId()
+    {
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        var UserId = user.FindFirst(u => u.Type.Contains("nameidentifier"))?.Value;
+        return UserId;
+    }
+}
+

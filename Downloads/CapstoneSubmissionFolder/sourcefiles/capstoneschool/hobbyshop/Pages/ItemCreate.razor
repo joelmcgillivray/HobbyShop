@@ -1,0 +1,362 @@
+﻿@page "/ItemCreate"
+@using Microsoft.EntityFrameworkCore;
+@using hobbyshop.Data;
+@inject IDbContextFactory<DataContext> DataContextFactory;
+@inject Microsoft.JSInterop.IJSRuntime JSRuntime;
+
+<!--/**
+* Author: Joel McGillivray
+*
+* Brief summary of page:
+* This page controls all the displays for the item CRUD. Deletion is only a soft delete. 
+* When a user selects creation of a new item they will be met with that new display. The editing will also show a different
+* display, and when archiving an item and wanting to see that view the user will filter, or search for those items. Pagination
+* is also on this page
+*/-->
+
+<div class="text-center">
+    <h3>Inventory</h3>
+</div>
+
+<!-- Creating an item -->
+@if (showCreate)
+{
+    <div class="container my-5">
+        <div class="card shadow">
+            <div class="card-body">
+
+                <div class="row mb-3">
+                    <label for="ItemName" class="col-4 col-form-label">Item Name</label>
+                    <div class="col-8">
+                        <input Id="ItemName" name="ItemName" type="text" class="form-control" @bind="@newItem.ItemName">
+                        @if (saveAttempted && string.IsNullOrWhiteSpace(newItem?.ItemName))
+                        {
+                            <span class="text-danger">Item Name is required.</span>
+                        }
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <label for="SetName" class="col-4 col-form-label">Set Name</label>
+                    <div class="col-8">
+                        <input Id="SetName" name="SetName" type="text" class="form-control" @bind="@newItem.SetName">
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <label for="Description" class="col-4 col-form-label">Description</label>
+                    <div class="col-8">
+                        <input Id="Description" name="Description" type="text" class="form-control" @bind="@newItem.Description">
+                        @if (saveAttempted && string.IsNullOrWhiteSpace(newItem?.Description))
+                        {
+                            <span class="text-danger">Description is required.</span>
+                        }
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <label for="Category" class="col-4 col-form-label">Category</label>
+                    <div class="col-8">
+                        <select Id="Category" name="Category" class="form-control" @bind="@newItem.CategoryID">
+                            <option value="" disabled>Select Category</option>
+                            @foreach (var category in categories)
+                            {
+                                <option value="@category.CategoryID">@category.CategoryName</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <label for="Image" class="col-4 col-form-label">Image Insert</label>
+                    <div class="col-8">
+                        <input Id="Image" name="Image" type="text" class="form-control" @bind="@newItem.Image">
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <label for="Price" class="col-4 col-form-label">Price</label>
+                    <div class="col-8">
+                        <input Id="Price" name="Price" type="text" class="form-control" @bind="@newItem.Price">
+                        @if (saveAttempted &&  newItem?.Price.HasValue == false)
+                        {
+                            <span class="text-danger">Price is required and must be a valid number.</span>
+                        }
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <label for="Tag" class="col-4 col-form-label">Tag Name</label>
+                    <div class="col-8">
+                        <select Id="Tag" name="Tag" class="form-control" @bind="@newItem.TagID">
+                            <option value="">Select Tag</option>
+                            @foreach (var tag in tags)
+                            {
+                                <option value="@tag.TagID">@tag.TagName</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <label for="Quantity" class="col-4 col-form-label">Quantity</label>
+                    <div class="col-8">
+                        <input Id="Quantity" name="Quantity" type="text" class="form-control" @bind="@newItem.Stock">
+                        @if (saveAttempted && newItem?.Stock.HasValue == false)
+                        {
+                            <span class="text-danger">Stock is required and must be a valid integer.</span>
+                        }
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <label for="Condition" class="col-4 col-form-label">Condition</label>
+                    <div class="col-8">
+                        <select Id="Condition" name="Condition" class="form-control" @bind="@newItem.Condition">
+                            <option value="">Select Condition</option>
+                            @foreach (var cond in condition)
+                            {
+                                <option value="@cond.ConditionID">@cond.ConditionName</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group row">
+                    <div class="offset-4 col-8">
+                        <div class="d-flex flex-column flex-md-row justify-content-between">
+                            <button name="submit" Type="submit" Class="btn btn-primary mb-3 mb-md-0" @onclick="createNewItem">Save New Item</button>
+                            <button name="cancel" type="button" class="btn btn-secondary mt-md-0 mt-3 mt-md-0" @onclick="CancelCreateItem">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+else
+{ <!-- Not creating an item, regular view -->
+    <div class="form-group row p-3">
+        <div class="col-12 col-md-6 mb-3 mb-md-0 d-flex align-items-center">
+            <button name="submit" type="submit" class="btn btn-primary" @onclick="createForm">Add New Item</button>
+            <button name="submit" type="submit" class="btn btn-primary ms-2" @onclick="ResetPage">Reset</button>
+        </div>
+
+        <div class="col-12 col-md-6">
+            <div class="d-flex justify-content-between justify-content-md-end align-items-center">
+                <div style="margin-right: 10px; flex-grow: 1; min-width: 150px;">
+                    <select class="form-control" @bind="selectedHistoricalFilter">
+                        <option value=true>Archived</option>
+                        <option value=false>Active</option>
+                        <option value="All">All</option>
+                    </select>
+                </div>
+                <button name="submit" type="submit" class="btn btn-primary" @onclick="() => ShowItems(selectedHistoricalFilter, 1)">Filter</button>
+            </div>
+        </div>
+
+        <div class="input-group mb-3 mt-3">
+            <input @bind="searchTerm" type="text" class="form-control" placeholder="Search items" />
+            <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowItems(selectedHistoricalFilter, 1)">Search</button>
+        </div>
+    </div>
+
+    @if (@InventoryItems is not null && @InventoryItems.Count() > 0)
+    {
+        <div class="table-responsive">
+            <table class="table table-striped table-hover table-bordered table-light border-dark">
+                <thead>
+                    <tr>
+                        <th scope="col">Item Name</th>
+                        <th class="d-none d-md-table-cell" scope="col">Set Name</th>
+                        <th class="d-none d-md-table-cell" scope="col">Category Name</th>
+                        <th class="d-none d-md-table-cell" scope="col">Tag Name</th>
+                        <th class="d-none d-md-table-cell" scope="col">Description</th>
+                        <th scope="col">Image</th>
+                        <th scope="col">Price</th>
+                        <th class="d-none d-md-table-cell" scope="col">Stock</th>
+                        <th class="d-none d-md-table-cell" scope="col">Condition</th>
+                        <th class="d-none d-md-table-cell" scope="col">Status</th>
+                        <th scope="col">Edit</th>
+                        <th scope="col">Archive</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in InventoryItems)
+                    {
+                        <!-- if we're not editing an item (didn't select the edit button) -->
+                        @if (!@editItem)
+                        {
+                            <tr>
+                                <td>@item.ItemName</td>
+                                <td class="d-none d-md-table-cell">@item.SetName</td>
+                                <td class="d-none d-md-table-cell">@GetCategoryName(item.CategoryID)</td>
+                                <td class="d-none d-md-table-cell">@GetTagName(item.TagID)</td>
+                                <td class="d-none d-md-table-cell">@item.Description</td>
+                                <td><img src="@item.Image" width="50" height="50"></td>
+                                <td>@($"${item.Price:0.00}")</td>
+                                <td class="d-none d-md-table-cell">@item.Stock</td>
+                                <td class="d-none d-md-table-cell">@GetConditionName(item.Condition)</td>
+                                <td class="d-none d-md-table-cell">@(item.Historical.HasValue ? (item.Historical.Value ? "Inactive" : "Active") : "N/A")</td>
+                                <td>
+                                    <button name="submit" type="submit" class="btn btn-primary" @onclick="() => ItemUpdateForm(item)">
+                                        <i class="bi bi-pencil-square"></i>
+                                    </button>
+                                </td>
+                                <td>
+                                    <button name="submit" type="submit" class="btn btn-primary" @onclick="() => UpdateHistoricalFlag(item)">
+                                        @if (item.Historical.HasValue && item.Historical.Value)
+                                        {
+                                            <i class="bi bi-check-lg"></i>
+                                            
+                                        }
+                                        else
+                                        {
+                                            <i class="bi bi-trash"></i>
+                                        }
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                        else
+                        {
+                            <!-- Selected an item to edit -->
+                            if (@ItemToUpdate is not null && @ItemToUpdate.ItemID == @item.ItemID)
+                            {
+                                <tr>
+                                    <td><input id="ItemName" name="ItemName" type="text" class="form-control" @bind="@ItemToUpdate.ItemName" title="@ItemToUpdate.ItemName"></td>
+                                    <td class="d-none d-md-table-cell"><input id="SetName" name="SetName" type="text" class="form-control" @bind="@ItemToUpdate.SetName" title="@ItemToUpdate.SetName"></td>
+                                    <td class="d-none d-md-table-cell">
+                                        <select id="CategoryID" name="CategoryID" class="form-control" @bind="@ItemToUpdate.CategoryID" title="@ItemToUpdate.CategoryID">
+                                            <option value="">No Category</option>
+                                            @foreach (var category in categories)
+                                            {
+                                                <option value="@category.CategoryID">@category.CategoryName</option>
+                                            }
+                                        </select>
+                                    </td>
+                                    <td class="d-none d-md-table-cell">
+                                        <select id="TagID" name="TagID" class="form-control" @bind="@ItemToUpdate.TagID" title="@ItemToUpdate.TagID">
+                                            <option value="">No Tag</option>
+                                            @foreach (var tag in tags)
+                                            {
+                                                <option value="@tag.TagID">@tag.TagName</option>
+                                            }
+                                        </select>
+                                    </td>
+                                    <td class="d-none d-md-table-cell"><input id="Description" name="Description" type="text" class="form-control" @bind="@ItemToUpdate.Description" title="@ItemToUpdate.Description"></td>
+                                    <td><input id="Image" name="Image" type="text" class="form-control" @bind="@ItemToUpdate.Image"></td>
+                                    <td><input id="Price" name="Price" type="text" class="form-control" @bind="@ItemToUpdate.Price" title="@ItemToUpdate.Price"></td>
+                                    <td class="d-none d-md-table-cell"><input id="Stock" name="Stock" type="text" class="form-control" @bind="@ItemToUpdate.Stock" title="@ItemToUpdate.Stock"></td>
+                                    <td class="d-none d-md-table-cell">
+                                        <select id="Condition" name="Condition" class="form-control" @bind="@ItemToUpdate.Condition" title="@ItemToUpdate.Condition">
+                                            <option value="">No Condition</option>
+                                            @foreach (var cond in condition)
+                                            {
+                                                <option value="@cond.ConditionID">@cond.ConditionName</option>
+                                            }
+                                        </select>
+                                    </td>
+                                    <td class="d-none d-md-table-cell">
+                                        <span>@(item.Historical.HasValue ? (item.Historical.Value ? "Inactive" : "Active") : "N/A")</span>
+                                    </td>
+                                    <td>
+                                        <button name="submit" type="submit" class="btn btn-primary" @onclick="@UpdateItem">
+                                            <i class="bi bi-floppy"></i>
+                                        </button>
+                                    </td>
+                                    <td>
+                                        <button name="submit" type="submit" class="btn btn-primary" @onclick="() => UpdateHistoricalFlag(item)">
+                                            @if (item.Historical.HasValue && item.Historical.Value)
+                                            {
+                                                <i class="bi bi-check-lg"></i>
+
+                                            }
+                                            else
+                                            {
+                                                <i class="bi bi-trash"></i>
+                                            }
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                            else
+                            {
+                                <!-- otherwise we're just showing the items -->
+                                <tr>
+                                    <td>@item.ItemName</td>
+                                    <td class="d-none d-md-table-cell">@item.SetName</td>
+                                    <td class="d-none d-md-table-cell">@GetCategoryName(item.CategoryID)</td>
+                                    <td class="d-none d-md-table-cell">@GetTagName(item.TagID)</td>
+                                    <td class="d-none d-md-table-cell">@item.Description</td>
+                                    <td><img src="@item.Image" width="50" height="50"></td>
+                                    <td>@($"${item.Price:0.00}")</td>
+                                    <td class="d-none d-md-table-cell">@item.Stock</td>
+                                    <td class="d-none d-md-table-cell">@GetConditionName(item.Condition)</td>
+                                    <td class="d-none d-md-table-cell">@(item.Historical.HasValue ? (item.Historical.Value ? "Inactive" : "Active") : "N/A")</td>
+                                    <td>
+                                        <button name="submit" type="submit" class="btn btn-primary" @onclick="() => ItemUpdateForm(item)">
+                                            <i class="bi bi-pencil-square"></i>
+                                        </button>
+                                    </td>
+                                    <td>
+                                        <button name="submit" type="submit" class="btn btn-primary" @onclick="() => UpdateHistoricalFlag(item)">
+                                            @if (item.Historical.HasValue && item.Historical.Value)
+                                            {
+                                                <i class="bi bi-check-lg"></i>
+
+                                            }
+                                            else
+                                            {
+                                                <i class="bi bi-trash"></i>
+                                            }
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    }
+                </tbody>
+            </table>
+
+            <!-- Pagination area -->
+            <div class="container mt-2">
+                <nav aria-label="Page navigation">
+                    <ul class="pagination justify-content-center">
+                        <li class="page-item">
+                            @if (IsFirstPage)
+                            {
+                                <button class="page-link" disabled>
+                                    <i class="bi bi-caret-left"></i>
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="page-link" @onclick="PreviousPage">
+                                    <i class="bi bi-caret-left"></i>
+                                </button>
+                            }
+                        </li>
+                        <li class="page-item disabled">
+                            <span class="page-link">Page @currentPage of @TotalPages</span>
+                        </li>
+                        <li class="page-item">
+                            @if (IsLastPage)
+                            {
+                                <button class="page-link" disabled>
+                                    <i class="bi bi-caret-right"></i>
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="page-link" @onclick="NextPage">
+                                    <i class="bi bi-caret-right"></i>
+                                </button>
+                            }
+                        </li>
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    }
+}

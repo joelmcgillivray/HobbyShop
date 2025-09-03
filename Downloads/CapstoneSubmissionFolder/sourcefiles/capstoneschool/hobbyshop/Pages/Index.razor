@@ -1,0 +1,457 @@
+﻿@page "/"
+@using hobbyshop.Data;
+@using Microsoft.EntityFrameworkCore;
+@using Microsoft.AspNetCore.Components.Authorization;
+@inject IDbContextFactory<DataContext> DataContextFactory;
+@inject NavigationManager NavigationManager;
+@inject DataContext _context;
+@inject IJSRuntime JSRuntime;
+
+<!--/**
+ * Author: Joel McGillivray
+ *
+ * Brief summary of page:
+ * This is the landing page of every user logged in or not. This page displays all the items, pagination. Items are searchable
+ * the user also has the ability to filter, reset all search and filter params. A valid user can add items to cart from this 
+ * page as well. The admin can udpate the information in the newsworthy text box. The page also creates a cart for the user 
+ * if the user doesn't already have one
+ */-->
+
+<style>
+
+    .col-custom-5 {
+        flex: 0 0 auto;
+        width: 20%;
+        padding-top: 1rem;
+    }
+
+    @@media (max-width: 991px) {
+        .col-custom-5 {
+            width: 50%; 
+        }
+    }
+
+    @@media (max-width: 576px) {
+        .item-container:nth-child(n+2)
+        {
+            display: none;
+        }
+    }
+
+    @@media (min-width: 577px) and (max-width: 768px) {
+        .item-container:nth-child(n+3) {
+            display: none;
+        }
+    }
+</style>
+
+<div class="input-group mb-3">
+    <input @bind="SearchTerm" type="text" class="form-control" placeholder="Search items" />
+    <button class="btn btn-outline-secondary" type="button" @onclick="ApplySearch">Search</button>
+</div>
+
+<div class="container my-3">
+    <div class="d-flex flex-row-reverse align-items-center flex-wrap">
+
+        <button class="btn btn-primary ms-2 mt-2" @onclick="ResetPage">Reset</button>
+        <button class="btn btn-primary ms-2 mt-2" @onclick="ApplyFilter">Apply Filter</button>
+
+        <div class="form-group me-md-2 mt-2">
+            <select @bind="selectedTagId" class="form-control">
+                <option value="">All Tags</option>
+                @foreach (var tag in tags)
+                {
+                    <option value="@tag.TagID">@tag.TagName</option>
+                }
+            </select>
+        </div>
+        <select @bind="currentSortOption" class="form-select me-2 mt-2 flex-grow-1" style="max-width: 200px;">
+            <option value="Default">Select sorting option</option>
+            <option value="LowToHigh">Price Low to High</option>
+            <option value="HighToLow">Price High to Low</option>
+        </select>
+    </div>
+</div>
+
+<!-- Newsworthy box code -->
+<div class="container p-3 my-3 bg-body rounded shadow-lg">
+    <h3 class="text-center">Newsworthy to stay up to date!</h3>
+    <AuthorizeView Roles="admin">
+        <Authorized>
+            <div class="text-center">
+                <input @bind="editableText" class="form-control my-2" style="max-width: 300px; margin: auto;" />
+                <button class="btn btn-primary" @onclick="SaveText">Save</button>
+            </div>
+        </Authorized>
+        <NotAuthorized>
+            <p class="text-center">@editableText</p>
+        </NotAuthorized>
+    </AuthorizeView>
+</div>
+
+<!-- Preoder box code -->
+<div class="container p-3 my-3 bg-body rounded shadow-lg">
+    <h3 class="text-center">Preorder</h3>
+    @if (preOrderItems != null && preOrderItems.Any())
+    {
+        <div class="row">
+            @foreach (var item in preOrderItems.Select((value, index) => new { Value = value, Index = index }))
+            {
+                var visibilityClass = item.Index switch
+                {
+                    0 => "", // always visible
+                    1 => "d-none d-sm-block", // hidden on xs, visible on sm and above
+                    2 => "d-none d-md-block", // hidden on xs and sm, visible on md and above
+                    _ => "d-none" // not visible as default for other items (if there are more than 3)
+                };
+
+                <div class="@($"col {visibilityClass}")" @onclick="() => GoToItem(item.Value.ItemID)" style="cursor:pointer;">
+                    <div class="d-flex flex-column align-items-center">
+                        <img src="@item.Value.Image" alt="@item.Value.ItemName" class="img-fluid" style="width: 50px; height: 50px; object-fit: cover;" />
+                        <div class="mt-2">@item.Value.ItemName</div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <p>No pre-order items available.</p>
+    }
+</div>
+
+<div class="row">
+    <!-- Calls the ItemCard component to build up the cards to be displayed -->
+    @foreach (var item in Items)
+    {
+        <div class="col-custom-5">
+            <ItemCard Item="item" />
+        </div>
+    }
+</div>
+
+<!-- The pagination code -->
+<div class="container mt-2">
+    <nav aria-label="Page navigation">
+        <ul class="pagination justify-content-center">
+            <li class="page-item">
+                @if (IsFirstPage)
+                {
+                    <button class="page-link" disabled>
+                        <i class="bi bi-caret-left"></i>
+                    </button>
+                }
+                else
+                {
+                    <button class="page-link" @onclick="PreviousPage">
+                        <i class="bi bi-caret-left"></i>
+                    </button>
+                }
+            </li>
+            <li class="page-item disabled">
+                <span class="page-link">Page @currentPage of @TotalPages</span>
+            </li>
+            <li class="page-item">
+                @if (IsLastPage)
+                {
+                    <button class="page-link" disabled>
+                        <i class="bi bi-caret-right"></i>
+                    </button>
+                }
+                else
+                {
+                    <button class="page-link" @onclick="NextPage">
+                        <i class="bi bi-caret-right"></i>
+                    </button>
+                }
+            </li>
+        </ul>
+    </nav>
+</div>
+
+
+@code {
+
+    /// <summary>
+    /// List of items that are to be displayed on the UI
+    /// </summary>
+    public List<Item> Items = new List<Item>();
+    /// <summary>
+    /// List of pre order items to be displayed
+    /// </summary>
+    private List<Item> preOrderItems;
+    /// <summary>
+    /// When we look for active items we dont want inactive items
+    /// </summary>
+    Boolean inactiveItems = false;
+    /// <summary>
+    /// The value that the user is looking for in the search bar
+    /// </summary>
+    public string SearchTerm { get; set; } = string.Empty;
+    /// <summary>
+    /// Default sorting option when user lands on page
+    /// </summary>
+    string currentSortOption = "Default";
+    /// <summary>
+    /// Current page that a user is on
+    /// </summary>
+    int currentPage = 1;
+    /// <summary>
+    /// Total number of items per page
+    /// </summary>
+    int pageSize = 10;
+    /// <summary>
+    /// Total count of the items
+    /// </summary>
+    int totalCount = 0;
+    /// <summary>
+    /// Boolean value to determine if the page is the first page
+    /// </summary>
+    bool IsFirstPage => currentPage == 1;
+    /// <summary>
+    /// Boolean value to determine if the page is the last page
+    /// </summary>
+    bool IsLastPage => currentPage >= TotalPages;
+    /// <summary>
+    /// Getting the total amount of pages that should be displayed for the UI if 0, then always 1
+    /// </summary>
+    int TotalPages => totalCount > 0 ? (int)Math.Ceiling((double)totalCount / pageSize) : 1;
+    /// <summary>
+    /// Loading in all the tags so a user can select filtering by tag
+    /// </summary>
+    List<hobbyshop.Data.Tag> tags = new List<hobbyshop.Data.Tag>();
+    /// <summary>
+    /// Default tag will always be empty or null
+    /// </summary>
+    int? selectedTagId = null;
+    /// <summary>
+    /// This is for the editable text box by admin, will take the value from the db or save new value
+    /// </summary>
+    private string editableText;
+
+    /// <summary>
+    /// Gets the pre-order items and the rest of the items to be displayed on first load to the user
+    /// </summary>
+    /// <returns>No return</returns>
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            preOrderItems = await GetPreOrderItems();
+            tags = await _context.Tags.ToListAsync();
+            await LoadTextAsync();
+            await LoadItems();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Getting the items to be displayed on the page
+    /// </summary>
+    /// <param name="searchTerm">The search term entered by the user</param>
+    /// <param name="currentPage">the current page the user is on</param>
+    /// <param name="pageSize">and the total number of items to be displayed on the page</param>
+    /// <returns></returns>
+    public async Task<(List<Item>, int)> GetItems(string searchTerm = "", int currentPage = 1, int pageSize = 10)
+    {
+        using var context = await DataContextFactory.CreateDbContextAsync();
+
+        // Setting up the query to get only the active items
+        IQueryable<Item> activeItems = context.Items.Where(item => item.Historical == inactiveItems);
+
+        if (!string.IsNullOrEmpty(searchTerm))
+        {
+            // Search term by the item name
+            activeItems = activeItems.Where(item => item.ItemName.Contains(searchTerm));
+        }
+
+        if (selectedTagId.HasValue)
+        {
+            activeItems = activeItems.Where(item => item.TagID == selectedTagId.Value);
+        }
+
+        // If the user is also setting or has set up other filter options
+        switch (currentSortOption)
+        {
+            case "LowToHigh":
+                activeItems = activeItems.OrderBy(item => item.Price);
+                break;
+            case "HighToLow":
+                activeItems = activeItems.OrderByDescending(item => item.Price);
+                break;
+            case "Default":
+                break;
+        }
+
+        // Getting the total count of items that can be displayed
+        int totalCount = await activeItems.CountAsync();
+
+        // Putting the items into the list of items 
+        var items = await activeItems.Skip((currentPage - 1) * pageSize)
+                               .Take(pageSize)
+                               .ToListAsync();
+
+        // Returning the total number of items, and the items
+        return (items, totalCount);
+    }
+
+    /// <summary>
+    /// When the user is entering a search term into the search bar get items method is activated and we get the 
+    /// total number of items as well as those items and refresh the page
+    /// </summary>
+    /// <returns>No return</returns>
+    public async Task ApplySearch()
+    {
+        var result = await GetItems(SearchTerm, currentPage, pageSize);
+        Items = result.Item1; // The list of items
+        totalCount = result.Item2; // The total count of items
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// When the user is entering a filter, get items method is activated and we get the
+    /// total number of items as well as those items and refresh the page
+    /// </summary>
+    /// <returns>No return</returns>
+    private async Task ApplyFilter()
+    {
+        var result = await GetItems(SearchTerm, currentPage, pageSize);
+        Items = result.Item1; // The list of items
+        totalCount = result.Item2; // The total count of items
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// This method gets the pre-ordered items. It takes the 3 newest items and puts them into the pre-order items 
+    /// box to be displayed on the UI
+    /// </summary>
+    /// <returns>The 3 items that were selected by the query</returns>
+    private async Task<List<Item>> GetPreOrderItems()
+    {
+        using var context = DataContextFactory.CreateDbContext();
+        var items = await context.Items
+                                 .Where(i => i.TagID == 2 && i.Historical == false)
+                                 .OrderByDescending(i => i.ItemID)
+                                 .Take(3)
+                                 .ToListAsync();
+
+        return items;
+    }
+
+    /// <summary>
+    /// Navigating to the specific item details page with that item id
+    /// </summary>
+    /// <param name="itemId">The item id that was selected</param>
+    private void GoToItem(int itemId)
+    {
+        NavigationManager.NavigateTo($"/ItemDisplay/{itemId}");
+    }
+
+    /// <summary>
+    /// Method for previous page, and notifies that state has changed
+    /// </summary>
+    /// <returns>No return</returns>
+    async Task PreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+            await LoadItems();
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Method for next page, and notifies that state has changed
+    /// </summary>
+    /// <returns>No return</returns>
+    async Task NextPage()
+    {
+        if (currentPage < TotalPages)
+        {
+            currentPage++;
+            await LoadItems();
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Method for reloading the page after a click the next or previous buttons
+    /// </summary>
+    /// <returns>No return</returns>
+    async Task LoadItems()
+    {
+        try
+        {
+            using var context = await DataContextFactory.CreateDbContextAsync();
+
+            if (context is not null)
+            {
+                var result = await GetItems(SearchTerm, currentPage, pageSize);
+                Items = result.Item1;
+                totalCount = result.Item2;
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Resets the search term, filter, and page number, then reloads the items.
+    /// </summary>
+    /// <returns>No return</returns>
+    public async Task ResetPage()
+    {
+        // Resetting the search term and filter
+        selectedTagId = null;
+        SearchTerm = string.Empty;
+        currentSortOption = "Default";
+        currentPage = 1;
+
+        // Reloading the items
+        await LoadItems();
+    }
+
+    /// <summary>
+    /// Loading in the data from the database if it exists for the editable text box, otherwise
+    /// default value loaded in
+    /// </summary>
+    /// <returns>No return</returns>
+    private async Task LoadTextAsync()
+    {
+        var textData = await _context.TextDatas.FirstOrDefaultAsync();
+        editableText = textData?.Content ?? "Default text";
+    }
+
+    /// <summary>
+    /// When an admin saves their desired text and its not bank it shall be saved to the db
+    /// This success will also ensure that the admin is notified of the save through 
+    /// the alert badge.
+    /// </summary>
+    /// <returns>No return</returns>
+    private async Task SaveText()
+    {
+        var textData = await _context.TextDatas.FirstOrDefaultAsync();
+        if (textData == null)
+        {
+            textData = new TextData { Content = editableText };
+            _context.TextDatas.Add(textData);
+        }
+        else
+        {
+            // Set the content of the class to be what the user set
+            textData.Content = editableText;
+        }
+
+        await _context.SaveChangesAsync();
+        // Alert the admin that the text was saved
+        await JSRuntime.InvokeVoidAsync("alert", "Text saved successfully.");
+    }
+}
+

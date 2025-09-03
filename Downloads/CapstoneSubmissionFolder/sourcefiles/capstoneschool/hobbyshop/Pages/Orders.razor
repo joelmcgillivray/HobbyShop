@@ -1,0 +1,288 @@
+﻿@page "/Orders"
+@using hobbyshop.Data;
+@using Microsoft.EntityFrameworkCore;
+@using Microsoft.AspNetCore.Identity;
+@inject AuthenticationStateProvider AuthenticationStateProvider;
+@inject DataContext _context;
+
+<!--/**
+* Author: Joel McGillivray
+*
+* Brief summary of page:
+* This page is the orders display. When a valid user has orders they will see them displayed here. Those orders will 
+* show the updated status, as well as a user can change the order of the order display (date asc/desc). The orders are also
+* paginated
+*/-->
+
+<style>
+    .product-image {
+        width: 75px;
+        height: 75px;
+        object-fit: contain;
+    }
+</style>
+
+<a class="btn btn-primary" href="/" role="button">
+    <i class="bi bi-arrow-left-circle"></i> Home
+</a>
+<button class="btn btn-primary" @onclick="ToggleSortOrder">Sort by Date (@currentSortOrder)</button>
+
+<h3 class="text-center">Order History</h3>
+
+<div class="container mt-5">
+    <div class="table-responsive">
+        <table class="table table-hover table-borderless table-striped align-middle">
+            <thead>
+                <tr>
+                    <th>Order ID</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                    <th>Total Price with Tax</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var order in orders)
+                {
+                    <tr @onclick="() => ToggleOrderDetails(order.OrderID)">
+                        <td>@order.OrderID</td>
+                        <td>@order.Status.StatusName</td>
+                        <td>@order.Date.ToString("yyyy-MM-dd")</td>
+                        <td>@CalculateTotalPriceWithTax(order).ToString("C")</td>
+                        <td>
+                            <i class="bi bi-chevron-expand"></i>
+                        </td>
+                    </tr>
+
+                    @if (currentlyExpandedOrderId == order.OrderID)
+                    {
+                        <tr>
+                            <td colspan="100%">
+                                <table class="table table-sm table-borderless align-middle">
+                                    <thead>
+                                        <tr><th></th>
+                                            <th>Product</th>
+                                            <th>Quantity</th>
+                                            <th>Price</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var detail in order.OrderDetails)
+                                        {
+                                            <tr>
+                                                <img src="@detail.Item.Image" class="product-image img-fluid rounded">
+                                                <td>@detail.Item.ItemName</td>
+                                                <td>@detail.Quantity</td>
+                                                <td>@detail.Price.ToString("C")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+    <!-- Pagination code -->
+    <div class="container mt-2">
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center">
+                <li class="page-item">
+                    @if (IsFirstPage)
+                    {
+                        <button class="page-link" disabled>
+                            <i class="bi bi-caret-left"></i>
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="page-link" @onclick="PreviousPage">
+                            <i class="bi bi-caret-left"></i>
+                        </button>
+                    }
+                </li>
+                <li class="page-item disabled">
+                    <span class="page-link">Page @currentPage of @TotalPages</span>
+                </li>
+                <li class="page-item">
+                    @if (IsLastPage)
+                    {
+                        <button class="page-link" disabled>
+                            <i class="bi bi-caret-right"></i>
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="page-link" @onclick="NextPage">
+                            <i class="bi bi-caret-right"></i>
+                        </button>
+                    }
+                </li>
+            </ul>
+        </nav>
+    </div>
+</div>
+
+@code {
+    /// <summary>
+    /// List of orders
+    /// </summary>
+    private List<Order> orders = new();
+    /// <summary>
+    /// The current expanded order id table row
+    /// </summary>
+    private int? currentlyExpandedOrderId;
+    /// <summary>
+    /// Current page that a user is on
+    /// </summary>
+    public int currentPage = 1;
+    /// <summary>
+    /// Total number of items per page
+    /// </summary>
+    public int pageSize = 10;
+    /// <summary>
+    /// Total count of the items
+    /// </summary>
+    public int totalCount = 0;
+    /// <summary>
+    /// Boolean value to determine if the page is the first page
+    /// </summary>
+    public bool IsFirstPage => currentPage == 1;
+    /// <summary>
+    /// Boolean value to determine if the page is the last page
+    /// </summary>
+    public bool IsLastPage => currentPage >= TotalPages;
+    /// <summary>
+    /// Getting the total amount of pages that should be displayed for the UI
+    /// </summary>
+    public int TotalPages => (int)Math.Ceiling((double)totalCount / pageSize);
+    /// <summary>
+    /// the default sort for the orders
+    /// </summary>
+    private SortOrder currentSortOrder = SortOrder.Ascending;
+
+    /// <summary>
+    /// Loads the userid as well as the total count of orders and then creates the list of 
+    /// orders that belong to that specific user on screen load
+    /// </summary>
+    /// <returns></returns>
+    protected override async Task OnInitializedAsync()
+    {
+        var userId = await GetUserId();
+        totalCount = await _context.Orders.Where(o => o.UserId == userId).CountAsync();
+
+        // Query the database for the orders associated with the user
+        orders = await _context.Orders
+                                .Where(o => o.UserId == userId)
+                                .Skip((currentPage - 1) * pageSize)
+                                .Take(pageSize)
+                                .Include(o => o.Status)
+                                .Include(o => o.OrderDetails)
+                                    .ThenInclude(detail => detail.Item)
+                                    .ToListAsync();
+    }
+
+    /// <summary>
+    /// Method for reloading the page after a click the next or previous buttons
+    /// </summary>
+    /// <returns>No return</returns>
+    private async Task LoadItems()
+    {
+        var userId = await GetUserId();
+
+        // Sorting first
+        IQueryable<Order> query = currentSortOrder == SortOrder.Ascending
+                                  ? _context.Orders.Where(o => o.UserId == userId).OrderBy(o => o.Date)
+                                  : _context.Orders.Where(o => o.UserId == userId).OrderByDescending(o => o.Date);
+
+        // Include the rest of the query
+        query = query.Include(o => o.Status)
+                     .Include(o => o.OrderDetails)
+                     .ThenInclude(detail => detail.Item);
+
+        // Setting page
+        totalCount = await query.CountAsync();
+        orders = await query.Skip((currentPage - 1) * pageSize).Take(pageSize).ToListAsync();
+        // Reload
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Method for previous page, and notifies that state has changed
+    /// </summary>
+    /// <returns>No return</returns>
+    public async Task PreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+            await LoadItems();
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Method for next page, and notifies that state has changed
+    /// </summary>
+    /// <returns>No return</returns>
+    public async Task NextPage()
+    {
+        if (currentPage < TotalPages)
+        {
+            currentPage++;
+            await LoadItems();
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Expands and retracts expansions of table details
+    /// </summary>
+    /// <param name="orderId">The specific row where that order id is found</param>
+    private void ToggleOrderDetails(int orderId)
+    {
+        currentlyExpandedOrderId = currentlyExpandedOrderId == orderId ? (int?)null : orderId;
+    }
+
+    /// <summary>
+    /// Getting the user id to figure out what orders belong to that user
+    /// </summary>
+    /// <returns></returns>
+    private async Task<string> GetUserId()
+    {
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        var UserId = user.FindFirst(u => u.Type.Contains("nameidentifier"))?.Value;
+        return UserId;
+    }
+
+    /// <summary>
+    /// Calculating the tax with the order to display total amount of each order
+    /// </summary>
+    /// <param name="order">The specific order id that needs to be calculated</param>
+    /// <returns>The order calculated with the price and tax amount added for a full total</returns>
+    private decimal CalculateTotalPriceWithTax(Order order)
+    {
+        return order.OrderDetails.Sum(detail => ((decimal)detail.Price * detail.Quantity) + detail.TaxAmount);
+    }
+
+    /// <summary>
+    /// The orders in which can be used by a user to display their orders
+    /// </summary>
+    public enum SortOrder
+    {
+        Ascending,
+        Descending
+    }
+
+    /// <summary>
+    /// Toggling which to be used to display the correct results
+    /// </summary>
+    /// <returns>No return</returns>
+    private async Task ToggleSortOrder()
+    {
+        currentSortOrder = currentSortOrder == SortOrder.Ascending ? SortOrder.Descending : SortOrder.Ascending;
+        await LoadItems();
+    }
+}
+
